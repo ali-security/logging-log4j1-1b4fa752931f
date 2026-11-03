@@ -168,6 +168,7 @@
   <target name="regression" depends="Core, Minimum, Logger, DOM, CustomLevel,
                                      CustomLogger,PatternLayout,
                                      HierarchyThreshold, DefaultInit, SocketServer,
+                                     HardenedLoggingEventInputStream,
                                      XMLLayout, AsyncAppender,
                                      OptionConverter, BoundedFIFO,
                                      CyclicBuffer, OR,
@@ -336,6 +337,15 @@
    </junit>
       </sequential>
     </parallel>
+  </target>
+
+  <target name="HardenedLoggingEventInputStream" depends="build">
+    <junit printsummary="yes" fork="yes"
+        haltonfailure="${haltonfailure}" dir="${basedir}">
+      <classpath refid="tests.classpath"/>
+      <formatter type="plain" usefile="false" />
+      <test name="org.apache.log4j.net.HardenedLoggingEventInputStreamTest" />
+    </junit>
   </target>
 
   <target name="XMLLayout" depends="build">
