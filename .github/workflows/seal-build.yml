@@ -1,0 +1,68 @@
+# Build and test log4j 1.2.17 the way the project itself does: `mvn verify`,
+# whose `test` phase runs the Ant regression suite (tests/build.xml `runAll`)
+# through maven-antrun-plugin. Upstream has no GitHub Actions CI; this workflow
+# was authored for the sealed build.
+#
+# Toolchain: OpenJDK 7 + Maven 3.6 (maven:3-jdk-7). The pom compiles with
+# -source/-target 1.4, which JDK 7 still supports, and JDK 7 can still reach
+# Maven Central over TLS 1.2.
+#
+# The container runs as the runner's non-root user: ErrorHandlerTestCase
+# configures a FileAppender on `/xyz/:x.log` and expects it to fail so the
+# FallbackErrorHandler kicks in; as root, FileAppender creates `/xyz` and the
+# fallback never fires.
+name: seal-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "Space-separated tests/build.xml target names (e.g. 'Core ErrorHandler'); empty runs the full runAll suite"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test (JDK 7, Maven 3.6)
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/home"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp/home -e MAVEN_CONFIG=/tmp/home/.m2 \
+            -v "$RUNNER_TEMP/home:/tmp/home" -v "$GITHUB_WORKSPACE:/w" -w /w \
+            maven:3-jdk-7 bash -ec '
+              java -version; mvn -v
+              M2=/tmp/home/.m2/repository
+              FILTER="${{ inputs.test-filter }}"
+              if [ -n "$FILTER" ]; then
+                # Selected tests only: compile, run the named tests/build.xml
+                # targets with Ant, then package the bundle jar.
+                mvn -B -Duser.home=/tmp/home -Dmaven.site.skip=true clean test-compile
+                curl -fsSL https://archive.apache.org/dist/ant/binaries/apache-ant-1.8.4-bin.tar.gz | tar -xz -C /tmp
+                /tmp/apache-ant-1.8.4/bin/ant -lib "$M2/junit/junit/3.8.1/junit-3.8.1.jar" -f tests/build.xml \
+                  -Dm2_repo="$M2" -Dlog4j.jar=/w/target/classes -Dproject.lib.home=/w/target $FILTER
+                mvn -B -Duser.home=/tmp/home org.apache.felix:maven-bundle-plugin:2.1.0:bundle
+              else
+                mvn -B -Duser.home=/tmp/home -Dmaven.site.skip=true clean verify
+              fi
+            ' 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Test summary
+        run: |
+          # Ant's plain formatter prints each suite's result line twice
+          # (printsummary + formatter); count the "Running" lines once.
+          grep -E '^\s*\[junit\] (Running|Tests run:)' "$RUNNER_TEMP/build.log" \
+            | awk '/Running/ {name=$3; next} name != "" {print "SUITE " name ": " $0; name=""}'
+          grep -E '^\s*\[junit\] Running' -A1 "$RUNNER_TEMP/build.log" | grep -E 'Tests run:' \
+            | awk -F'[ ,]+' '{for(i=1;i<=NF;i++){if($i=="run:")r+=$(i+1);if($i=="Failures:")f+=$(i+1);if($i=="Errors:")e+=$(i+1)}; s++} END {printf "TOTAL: %d suites, %d tests run, %d failures, %d errors, %d passed\n", s, r, f, e, r-f-e}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log4j-jar
+          path: target/log4j-1.2.17.jar
+          if-no-files-found: error
