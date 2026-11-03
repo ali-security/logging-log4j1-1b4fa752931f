@@ -177,7 +177,8 @@
                                      CyclicBuffer, OR,
                                      LevelMatchFilter, PatternParser, 
                                      ErrorHandler,Rewrite, JNDIUtil, Jdbc,
-                                     HardenedObjectInputStream"/>
+                                     HardenedObjectInputStream,
+                                     NTEventLogAppenderRemoval"/>
 
   <!-- ================================================================= -->
   <!-- Longer unit tests                                                 -->
@@ -491,14 +492,12 @@
       </junit>
   </target>
 
-  <target name="NTEventLogAppender" depends="build" if="is-windows">
-    <junit printsummary="yes" 
-        fork="yes" 
-        haltonfailure="${haltonfailure}"
-        dir="${project.lib.home}">
+  <target name="NTEventLogAppenderRemoval" depends="build">
+    <junit printsummary="yes" fork="yes"
+        haltonfailure="${haltonfailure}" dir="${basedir}">
       <classpath refid="tests.classpath"/>
       <formatter type="plain" usefile="false"/>
-      <test name="org.apache.log4j.nt.NTEventLogAppenderTest" />
+      <test name="org.apache.log4j.NTEventLogAppenderRemovalTest" />
     </junit>
   </target>
 
