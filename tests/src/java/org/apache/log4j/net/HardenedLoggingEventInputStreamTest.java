@@ -28,8 +28,10 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Vector;
 
 import junit.framework.TestCase;
@@ -273,6 +275,65 @@ public class HardenedLoggingEventInputStreamTest extends TestCase {
     assertEquals(0, gadgetReadCount);
     assertEquals(1, logged.size());
     assertEquals("first", ((LoggingEvent) logged.elementAt(0)).getRenderedMessage());
+  }
+
+  /**
+   * CVE-2023-26464: the HashSet DAG from the logback advisory, whose
+   * hashCode() costs 2^depth once deserialized.
+   */
+  static Set nestedHashSets(int depth) {
+    Set root = new HashSet();
+    Set s1 = root;
+    Set s2 = new HashSet();
+    for (int i = 0; i < depth; i++) {
+      Set t1 = new HashSet();
+      Set t2 = new HashSet();
+      t1.add("foo");
+      s1.add(t1);
+      s1.add(t2);
+      s2.add(t1);
+      s2.add(t2);
+      s1 = t1;
+      s2 = t2;
+    }
+    return root;
+  }
+
+  /**
+   * CVE-2023-26464, end to end: a logging event carrying deeply nested
+   * HashSets in its MDC is rejected by the SocketNode instead of keeping it
+   * busy computing hash codes, and the connection is dropped.
+   */
+  public void testSocketNodeRejectsNestedCollectionsInsideLoggingEvent() throws Exception {
+    Map props = new HashMap();
+    props.put("hostID", nestedHashSets(100));
+    Vector logged = runSocketNode(new Object[] {
+        makeEvent("first", null, null),
+        makeEvent("carrier", props, null),
+        makeEvent("after carrier", null, null) });
+
+    assertEquals(1, logged.size());
+    assertEquals("first", ((LoggingEvent) logged.elementAt(0)).getRenderedMessage());
+  }
+
+  /**
+   * The collection budget applies per event: a SocketNode keeps logging a
+   * long stream of events that each carry an MDC.
+   */
+  public void testSocketNodeAcceptsManyEventsWithMdc() throws Exception {
+    int count = HardenedObjectInputStream.MAX_COLLECTION_COUNT * 2;
+    Object[] events = new Object[count];
+    for (int i = 0; i < count; i++) {
+      Map props = new HashMap();
+      props.put("hostID", "client-" + i);
+      events[i] = makeEvent("event " + i, props, null);
+    }
+    Vector logged = runSocketNode(events);
+
+    assertEquals(count, logged.size());
+    LoggingEvent last = (LoggingEvent) logged.elementAt(count - 1);
+    assertEquals("event " + (count - 1), last.getRenderedMessage());
+    assertEquals("client-" + (count - 1), last.getProperty("hostID"));
   }
 
   /**
